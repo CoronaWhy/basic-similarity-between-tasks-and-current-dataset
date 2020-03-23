@@ -200,9 +200,11 @@ class Dataset:
         if mode.lower() == 'compare':
             self.compute_vectors = True
             self.create_indexes = True
+        
         elif mode.lower() == 'integrate':
             self.compute_vectors = True
             self.create_indexes = False
+        
         elif mode.lower() == 'raw':
             self.compute_vectors = False
             self.create_indexes = False
@@ -293,7 +295,7 @@ class Dataset:
             return np.float32(np.dot(data, self.faiss_params['mahalanobis_transform'].T))
 
     def get_similar_docs_than(self, data, k=10, by=None, section=None):
-        if self.compute_vectors:
+        if not self.compute_vectors:
             raise IndexError('Compute vector attribute is disabled')
 
         if by == None:
@@ -509,7 +511,7 @@ if __name__ == '__main__':
 
     for i in range(len(tasks)):
         print(tasks[i]["title"] + "\n")
-        documents = dataset.get_similar_docs_than(tasks[0]['description'], k=10)
+        documents = dataset.get_similar_docs_than(tasks[i]['description'], k=10)
         for j, doc in enumerate(documents):
             print(f"Rank {j+1}: \nPaper ID: {doc.id} \n" + doc.text[:500] + "\n")
 
