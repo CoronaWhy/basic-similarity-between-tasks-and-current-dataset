@@ -1,7 +1,5 @@
 import faiss
 import numpy as np
-import scispacy
-import spacy
 import pickle
 from scipy.spatial import distance
 import concurrent.futures
@@ -184,14 +182,18 @@ class Dataset:
         self.hash_to_idx[doc.id] = len(self.documents)
         self.documents.append(doc)
 
+    def add_raw_document_from_tuple(self, data):
+        self.add_raw_document(paper=data[0], mean_vectors=data[1])
+
     def parse_dataset(self, dataset, vectors_dataset=None):
         if vectors_dataset is not None:
-            for i, (paper, mean_vectors) in enumerate(zip(dataset, vectors_dataset)):
-                self.add_raw_document(paper, mean_vectors)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                tuple_data = list(zip(dataset, vectors_dataset))
+                list(tqdm(executor.map(self.add_raw_document_from_tuple, tuple_data), total=len(tuple_data)))
                 
-        else:
-            for i, paper in enumerate(dataset):
-                self.add_raw_document(paper)
+        else: 
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+                list(tqdm(executor.map(self.add_raw_document, dataset), total=len(dataset)))
 
     def __init__(self, num_dimensions, dataset_path=None, vectors_dataset_path=None, num_centroids=1, similarity_metric='cosine', mode='compare'):
         self.dataset_path = dataset_path
@@ -452,9 +454,7 @@ class Dataset:
             
             # Download from kaggle
             kaggle.api.authenticate()
-            print('A')
             kaggle.api.dataset_download_files(dataset_name, path=folder_path, unzip=True)
-            print('B')
 
             # Create new dataset with the changes
             self.scan_folder(folder_path)
@@ -474,6 +474,8 @@ class Dataset:
 
 class PretrainedSpacyDataset(Dataset):
     def __init__(self, num_dimensions, dataset_path=None, vectors_dataset_path=None, num_centroids=1, similarity_metric='cosine', mode='compare'):
+        import scispacy
+        import spacy
         self.nlp = spacy.load("en_core_sci_lg")
 
         super().__init__(num_dimensions=num_dimensions, 
@@ -497,7 +499,45 @@ class PretrainedSpacyDataset(Dataset):
         if len(vectors) > 0:
             vectors = np.stack(vectors, axis=0)
         else:
-            vectors = np.zeros(shape=(0, self.dataset.num_dimensions))
+            vectors = np.zeros(shape=(0, self.num_dimensions))
+
+        return vectors
+
+class PaperWord2VecDataset(Dataset):
+    def __init__(self, num_dimensions, dataset_path=None, vectors_dataset_path=None, num_centroids=1, similarity_metric='cosine', mode='compare'):
+        import scispacy
+        import spacy
+        from gensim.models import KeyedVectors
+        self.nlp = spacy.load("en_core_sci_lg")
+        self.wv = KeyedVectors.load(os.path.join("models", "word2vec", "word2vec_using_papers.bin"))
+
+        super().__init__(num_dimensions=num_dimensions, 
+            dataset_path=dataset_path, 
+            vectors_dataset_path=vectors_dataset_path, 
+            num_centroids=num_centroids, 
+            similarity_metric=similarity_metric,
+            mode=mode)  
+
+    def get_mean_vector(self, text):
+        vectors = self.get_vectors(text)
+        if np.prod(vectors.shape) == 0:
+            return np.zeros(shape=(0, self.num_dimensions)), 0
+        return np.mean(vectors, axis=0), vectors.shape[0]
+
+    def get_vectors(self, text):
+        vectors = []
+        for token in self.nlp(text.lower()):
+            if not token.is_stop:
+                try:
+                    vector = self.wv[token.lemma_]
+                    vectors.append(vector)
+                except:
+                    pass
+
+        if len(vectors) > 0:
+            vectors = np.stack(vectors, axis=0)
+        else:
+            vectors = np.zeros(shape=(0, self.num_dimensions))
 
         return vectors
 
@@ -506,7 +546,7 @@ if __name__ == '__main__':
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from config import *
 
-    dataset = PretrainedSpacyDataset(dataset_path=DATASET_PICKLE, vectors_dataset_path=VECTORS_DATASET_PICKLE, num_dimensions=200, mode='compare')
+    dataset = PretrainedSpacyDataset(dataset_path=DATASET_PICKLE, vectors_dataset_path=SCAPY_PRETRAINED_VECTORS_DATASET_PICKLE, num_dimensions=200, mode='compare')
     tasks = LOAD_TASKS()
 
     for i in range(len(tasks)):

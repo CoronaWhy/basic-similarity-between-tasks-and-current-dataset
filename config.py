@@ -32,6 +32,8 @@ def LOAD_TASKS():
 """
     WORD2VEC PATHS
 """
-VECTORS_DATASET_PICKLE = os.path.join(DATASET_PROCESSED, 'vectors_dataset.pickle')
+SCAPY_PRETRAINED_VECTORS_DATASET_PICKLE = os.path.join(DATASET_PROCESSED, 'vectors_dataset.pickle')
+
+WORD2VEC_VECTORS_DATASET_PICKLE = os.path.join(DATASET_PROCESSED, 'word2vec_dataset.pickle')
 
 CORONAVIRUS_SPECIFIC_VOCAB_PATH = os.path.join(DATASET_PROCESSED, 'corona_vectors')
