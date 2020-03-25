@@ -50,7 +50,6 @@ class Document:
     def full(self):
         return self.text
     
-
     @property
     def body(self):
         return '\n'.join([self.raw_dict['sections'][section] for section in filter(lambda x: x != 'abstract', self.raw_dict['sections_order'])])
@@ -94,6 +93,10 @@ class Document:
             den = 0
             for section, vector_block in self.mean_vector_dict['sections'].items():
                 vector = vector_block['vector']
+
+                if vector is None or len(vector.shape) != 1 and vector.shape[0] != self.dataset.num_dimensions:
+                    continue
+
                 num_words = vector_block['num_words']
 
                 mean += vector * num_words
@@ -112,6 +115,10 @@ class Document:
                     continue
                 
                 vector = vector_block['vector']
+
+                if vector is None or len(vector.shape) != 1 and vector.shape[0] != self.dataset.num_dimensions:
+                    continue
+
                 num_words = vector_block['num_words']
 
                 mean += vector * num_words
@@ -179,7 +186,7 @@ class Dataset:
     """
     def add_raw_document(self, paper, mean_vectors=None):
         doc = Document(self, paper, mean_vectors)
-        self.hash_to_idx[doc.id] = len(self.documents)
+        self.hash_to_doc[doc.id] = doc
         self.documents.append(doc)
 
     def add_raw_document_from_tuple(self, data):
@@ -216,7 +223,7 @@ class Dataset:
         self.num_centroids = num_centroids
 
         # Hash to indices
-        self.hash_to_idx = {}
+        self.hash_to_doc = {}
         # Documents List
         self.documents = []
 
@@ -270,17 +277,43 @@ class Dataset:
         }
 
         # Title train
-        vectors = self.search_preprocess(np.stack([doc.mean_vector_title() for doc in self.documents], axis=0), is_train=True)
+        self.lookup_titles = {}
+        documents_with_titles = []
+
+        self.lookup_abstracts = {}
+        documents_with_abstracts = []
+
+        self.lookup_bodies = {}
+        documents_with_bodies = []
+        for doc in self.documents:
+            v_title = doc.mean_vector_title()
+            v_abstract = doc.mean_vector('abstract')
+            v_body = doc.mean_vector('body')
+
+            if not (v_title is None or len(v_title.shape) != 1 and v_title.shape[0] != self.num_dimensions):
+                self.lookup_titles[len(documents_with_titles)] = doc
+                documents_with_titles.append(v_title)
+
+
+            if not (v_abstract is None or len(v_abstract.shape) != 1 and v_abstract.shape[0] != self.num_dimensions):
+                self.lookup_abstracts[len(documents_with_abstracts)] = doc
+                documents_with_abstracts.append(v_abstract)
+
+            if not (v_body is None or len(v_body.shape) != 1 and v_body.shape[0] != self.num_dimensions):
+                self.lookup_bodies[len(documents_with_bodies)] = doc
+                documents_with_bodies.append(v_body)
+
+        vectors = self.search_preprocess(np.stack(documents_with_titles, axis=0), is_train=True)
         self.faiss_indices['title'].train(vectors)
         self.faiss_indices['title'].add(vectors)
 
         # Train abstract
-        vectors = self.search_preprocess(np.stack([doc.mean_vector('abstract') for doc in self.documents], axis=0), is_train=True)
+        vectors = self.search_preprocess(np.stack(documents_with_abstracts, axis=0), is_train=True)
         self.faiss_indices['abstract'].train(vectors)
         self.faiss_indices['abstract'].add(vectors)
 
         # Train full
-        vectors = self.search_preprocess(np.stack([doc.mean_vector('body') for doc in self.documents], axis=0), is_train=True)
+        vectors = self.search_preprocess(np.stack(documents_with_bodies, axis=0), is_train=True)
         self.faiss_indices['body'].train(vectors)
         self.faiss_indices['body'].add(vectors)
 
@@ -295,6 +328,9 @@ class Dataset:
                 L = np.linalg.cholesky(cov)
                 self.faiss_params['mahalanobis_transform'] = np.linalg.inv(L)
             return np.float32(np.dot(data, self.faiss_params['mahalanobis_transform'].T))
+
+    #def get_docs_that_contain(self, word):
+
 
     def get_similar_docs_than(self, data, k=10, by=None, section=None):
         if not self.compute_vectors:
@@ -328,15 +364,18 @@ class Dataset:
         # Find similars
         if by == Dataset.TITLE:
             _, indices = self.faiss_indices['title'].search(np.expand_dims(vector, axis=0), k)
+            docs = [self.lookup_titles[idx] for idx in indices[0]]
         
         elif by == Dataset.ABSTRACT:
             _, indices = self.faiss_indices['abstract'].search(np.expand_dims(vector, axis=0), k)
+            docs = [self.lookup_abstracts[idx] for idx in indices[0]]
         
         elif by == Dataset.SECTION:
             raise NotImplemented
         
         elif by == Dataset.BODY:
             _, indices = self.faiss_indices['body'].search(np.expand_dims(vector, axis=0), k)
+            docs = [self.lookup_bodies[idx] for idx in indices[0]]
 
         """if by == Dataset.TITLE:
             aux_vectors = np.stack([doc.mean_vector_title() for doc in self.documents], axis=0)
@@ -353,7 +392,7 @@ class Dataset:
         distances = distance.cdist(np.expand_dims(vector, axis=0), aux_vectors, "cosine")
         indices = distances.argsort(axis=-1)[:, :k]"""
 
-        return [self.documents[idx] for idx in indices[0]]
+        return docs
 
     """
     ==============================================================================
@@ -361,10 +400,10 @@ class Dataset:
     ==============================================================================
     """
     def exists(self, hash_id):
-        return hash_id in self.hash_to_idx.keys()
+        return hash_id in self.hash_to_doc.keys()
 
     def get_by_id(self, hash_id):
-        return self.documents[self.hash_to_idx[hash_id]]
+        return self.hash_to_doc[hash_id]
 
     """
     ==============================================================================
@@ -521,7 +560,7 @@ class PaperWord2VecDataset(Dataset):
     def get_mean_vector(self, text):
         vectors = self.get_vectors(text)
         if np.prod(vectors.shape) == 0:
-            return np.zeros(shape=(0, self.num_dimensions)), 0
+            return np.zeros(shape=(self.num_dimensions), ), 0
         return np.mean(vectors, axis=0), vectors.shape[0]
 
     def get_vectors(self, text):
@@ -546,15 +585,18 @@ if __name__ == '__main__':
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from config import *
 
-    dataset = PretrainedSpacyDataset(dataset_path=DATASET_PICKLE, vectors_dataset_path=SCAPY_PRETRAINED_VECTORS_DATASET_PICKLE, num_dimensions=200, mode='compare')
+    dataset = PretrainedSpacyDataset(dataset_path=DATASET_PICKLE, vectors_dataset_path=WORD2VEC_VECTORS_DATASET_PICKLE, num_dimensions=200, mode='compare')
+    #dataset.save()
     tasks = LOAD_TASKS()
 
-    for i in range(len(tasks)):
-        print(tasks[i]["title"] + "\n")
-        documents = dataset.get_similar_docs_than(tasks[i]['description'], k=10)
-        for j, doc in enumerate(documents):
-            print(f"Rank {j+1}: \nPaper ID: {doc.id} \n" + doc.text[:500] + "\n")
-
+    # for i in range(len(tasks)):
+    #     print(tasks[i]["title"] + "\n")
+    #     documents = dataset.get_similar_docs_than(tasks[i]['description'], k=10)
+    #     for j, doc in enumerate(documents):
+    #         print(f"Rank {j+1}: \nPaper ID: {doc.id} \n" + doc.text[:500] + "\n")
+    documents = dataset.get_similar_docs_than("coronavirus", k=10)
+    for j, doc in enumerate(documents):
+        print(f"Rank {j+1}: \nPaper ID: {doc.id} \n" + doc.text[:500] + "\n")
     # v1 = dataset.get_by_id('1378320afa873bdb81e3f3314a430c7a208d2d08').mean_vector('body')
     # v2 = dataset.get_mean_vector(tasks[0]['description'])
     # print(distance.cdist(np.expand_dims(v1, axis=0), np.expand_dims(v2, axis=0), "cosine"))
