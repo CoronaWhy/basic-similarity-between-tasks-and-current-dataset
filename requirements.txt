@@ -2,7 +2,7 @@ schedule==0.6.0
 scipy==1.4.1
 tensorboard==2.1.1
 tqdm==4.43.0
-tensorflow==2.5.1
+tensorflow==2.5.2
 gensim==3.8.1
 spacy==2.2.4
 torch==1.4.0
