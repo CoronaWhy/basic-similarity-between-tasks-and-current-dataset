@@ -6,7 +6,7 @@ tensorflow==2.5.3
 gensim==3.8.1
 spacy==2.2.4
 torch==1.4.0
-numpy==1.18.2
+numpy==1.22.0
 glob2==0.7
 scispacy==0.2.4
 kaggle==1.5.6
